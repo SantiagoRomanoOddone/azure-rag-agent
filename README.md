@@ -1,1 +1,3 @@
-# azure-rag-agent
+# Develop Generative AI Solutions in Azure
+
+
