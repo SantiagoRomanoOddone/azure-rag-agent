@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 
+
 def main():
     # Clear the console
     os.system('cls' if os.name == 'nt' else 'clear')
