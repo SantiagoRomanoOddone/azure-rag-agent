@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from openai import AzureOpenAI
 
+
 # Same logic but as a web service to be called from WhatsApp
 
 # Load environment variables
@@ -31,6 +32,13 @@ class Message(BaseModel):
     text: str
     chat_id: str  # optional, useful for maintaining context per user
 
+
+class WhatsAppMessage(BaseModel):
+    from_number: str
+    text: str
+
+
+    
 # Endpoint that WhatsApp will call
 @app.post("/chat")
 async def chat(message: Message):
@@ -63,3 +71,22 @@ async def chat(message: Message):
 
     completion = response.choices[0].message.content
     return {"chat_id": message.chat_id, "reply": completion}
+
+
+
+@app.post("/test-whatsapp")
+async def test_whatsapp(message: WhatsAppMessage):
+    print("Message received from WhatsApp:", message.dict())
+    return {"status": "ok", "received": message.dict()}
+
+# Endpoint to simulate sending a test message
+@app.get("/send-test")
+async def send_test():
+    test_message = WhatsAppMessage(
+        from_number="+15556370138",
+        text="Hello, this is a test message"
+    )
+    print("Simulating sending message:", test_message.dict())
+    # Directly call the endpoint
+    response = await test_whatsapp(test_message)
+    return response
