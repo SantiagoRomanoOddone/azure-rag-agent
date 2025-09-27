@@ -3,3 +3,8 @@ python -m venv labenv
 # On mac
 source ./labenv/bin/activate
 pip install -r requirements.txt openai
+pip install fastapi uvicorn python-dotenv openai
+
+
+# to run the api 
+uvicorn app:app --host 0.0.0.0 --port 8000
