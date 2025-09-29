@@ -21,6 +21,7 @@ curl -i -X POST \
   -d '{ "subscribed_fields": ["messages","message_deliveries","message_reads"] }'
 
 # DOCKER IMAGE---------------
+https://www.youtube.com/watch?v=HyCO6nMdxC0
 # to build the docker image
 
 docker build -t rag-fastapi .
@@ -28,5 +29,28 @@ docker run -p 8000:8000 rag-fastapi
 
 run this:
 http://localhost:8000/docs
+
+
+# On Azure 
+Create the container registry
+from access keys get the login_server, username, and password
+
+# On terminal, on the root 
+docker login <login_server> -u <username> -p <password>
+
+# building forcing amd64:
+docker buildx build --platform linux/amd64 -t <login_server>/spfastapi:build-tag-1 .
+
+docker push <login_server>/spfastapi:build-tag-1
+
+# On Azure
+Services > Repositories , and you will see spfastapi
+
+# now that we have our image stored, we can create an instanse of it
+whichin the resource group, search contanier instances 
+
+
+
+
 
 
