@@ -32,12 +32,6 @@ class Message(BaseModel):
     text: str
     chat_id: str  # optional, useful for maintaining context per user
 
-
-class WhatsAppMessage(BaseModel):
-    from_number: str
-    text: str
-
-
     
 # Endpoint that WhatsApp will call
 @app.post("/chat")
@@ -74,19 +68,23 @@ async def chat(message: Message):
 
 
 
-@app.post("/test-whatsapp")
-async def test_whatsapp(message: WhatsAppMessage):
-    print("Message received from WhatsApp:", message.dict())
-    return {"status": "ok", "received": message.dict()}
+verify_token = os.getenv("VERIFY_TOKEN")
 
-# Endpoint to simulate sending a test message
-@app.get("/send-test")
-async def send_test():
-    test_message = WhatsAppMessage(
-        from_number="+15556370138",
-        text="Hello, this is a test message"
-    )
-    print("Simulating sending message:", test_message.dict())
-    # Directly call the endpoint
-    response = await test_whatsapp(test_message)
-    return response
+# Webhook verification 
+@app.get("/webhook")
+async def verify_webhook(request: Request):
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode == "subscribe" and token == verify_token:
+        return int(challenge)
+    return {"error": "verification failed"}
+
+# Webhook receiver (WhatsApp messages land here)
+@app.post("/webhook")
+async def webhook(request: Request):
+    body = await request.json()
+    print("Incoming:", body)  # inspect incoming WhatsApp message
+    # later: call your /chat logic here
+    return {"status": "received"}
