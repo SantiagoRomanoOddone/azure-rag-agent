@@ -10,10 +10,11 @@ COPY requirements.txt .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your FastAPI app
+# Copy your FastAPI app and the .env file
 COPY rag-app ./rag-app
+COPY rag-app/.env .env
 
-# Expose port
+# Expose the port
 EXPOSE 8000
 
 # Command to run the FastAPI app

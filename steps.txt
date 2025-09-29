@@ -20,8 +20,13 @@ curl -i -X POST \
   -H 'Content-Type: application/json' \
   -d '{ "subscribed_fields": ["messages","message_deliveries","message_reads"] }'
 
+# DOCKER IMAGE---------------
 # to build the docker image
-cd docker 
 
 docker build -t rag-fastapi .
 docker run -p 8000:8000 rag-fastapi
+
+run this:
+http://localhost:8000/docs
+
+
