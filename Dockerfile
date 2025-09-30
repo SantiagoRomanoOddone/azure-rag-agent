@@ -15,7 +15,7 @@ COPY rag-app ./rag-app
 COPY rag-app/.env .env
 
 # Expose the port
-EXPOSE 8000
+EXPOSE 80
 
 # Command to run the FastAPI app
 CMD ["uvicorn", "rag-app.app:app", "--host", "0.0.0.0", "--port", "80"]

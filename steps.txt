@@ -51,6 +51,24 @@ whichin the resource group, search contanier instances
 
 
 
+contanierregistrysp.azurecr.io
 
+
+
+
+
+docker buildx build --platform linux/amd64 -t contanierregistrysp.azurecr.io/spfastapi:build-tag-1 .
+
+docker push contanierregistrysp.azurecr.io/spfastapi:build-tag-1
+
+
+curl "http://132.196.178.159/webhook?hub.mode=subscribe&hub.verify_token=s3cret123&hub.challenge=12345"
+
+
+# I used this video to create the web app 
+https://www.youtube.com/watch?v=Rd1LlNQZWko
+
+docker buildx build --platform linux/amd64 -t contaregistrysp.azurecr.io/spfastapi:build-tag-1 .
+docker push contaregistrysp.azurecr.io/spfastapi:build-tag-1
 
 

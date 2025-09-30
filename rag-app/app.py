@@ -1,8 +1,9 @@
 import os
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query
 from pydantic import BaseModel
 from openai import AzureOpenAI
+from fastapi.responses import PlainTextResponse
 
 
 # Same logic but as a web service to be called from WhatsApp
@@ -68,23 +69,49 @@ async def chat(message: Message):
 
 
 
-verify_token = os.getenv("VERIFY_TOKEN")
+# verify_token = os.getenv("VERIFY_TOKEN")
 
-# Webhook verification 
+# # Webhook verification 
+# @app.get("/webhook")
+# async def verify_webhook(request: Request):
+#     mode = request.query_params.get("hub.mode")
+#     token = request.query_params.get("hub.verify_token")
+#     challenge = request.query_params.get("hub.challenge")
+
+#     if mode == "subscribe" and token == verify_token:
+#         return PlainTextResponse(content=challenge)  # return exactly what Meta sends
+#     return PlainTextResponse(content="Verification failed", status_code=403)
+# @app.get("/webhook")
+# async def verify_webhook(request: Request):
+#     mode = request.query_params.get("hub.mode")
+#     token = request.query_params.get("hub.verify_token")
+#     challenge = request.query_params.get("hub.challenge")
+
+#     content = f"mode: {mode}\ntoken: {token}\nchallenge: {challenge}"
+#     return PlainTextResponse(content=content)
+
+# from fastapi import FastAPI, Request
+# from fastapi.responses import PlainTextResponse
+
+app = FastAPI()
+
+VERIFY_TOKEN = "s3cret123"
+
 @app.get("/webhook")
-async def verify_webhook(request: Request):
-    mode = request.query_params.get("hub.mode")
-    token = request.query_params.get("hub.verify_token")
-    challenge = request.query_params.get("hub.challenge")
+async def verify_webhook(
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token")
+):
+    if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
+        return PlainTextResponse(content=hub_challenge, status_code=200)
+    return PlainTextResponse(content="Forbidden", status_code=403)
 
-    if mode == "subscribe" and token == verify_token:
-        return int(challenge)
-    return {"error": "verification failed"}
 
-# Webhook receiver (WhatsApp messages land here)
+# POST WhatsApp sends the messages here
 @app.post("/webhook")
 async def webhook(request: Request):
     body = await request.json()
-    print("Incoming:", body)  # inspect incoming WhatsApp message
-    # later: call your /chat logic here
+    print("Incoming message:", body)
+    # later call your /chat logic here
     return {"status": "received"}
