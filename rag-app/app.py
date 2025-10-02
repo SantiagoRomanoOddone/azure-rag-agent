@@ -69,30 +69,6 @@ async def chat(message: Message):
 
 
 
-# verify_token = os.getenv("VERIFY_TOKEN")
-
-# # Webhook verification 
-# @app.get("/webhook")
-# async def verify_webhook(request: Request):
-#     mode = request.query_params.get("hub.mode")
-#     token = request.query_params.get("hub.verify_token")
-#     challenge = request.query_params.get("hub.challenge")
-
-#     if mode == "subscribe" and token == verify_token:
-#         return PlainTextResponse(content=challenge)  # return exactly what Meta sends
-#     return PlainTextResponse(content="Verification failed", status_code=403)
-# @app.get("/webhook")
-# async def verify_webhook(request: Request):
-#     mode = request.query_params.get("hub.mode")
-#     token = request.query_params.get("hub.verify_token")
-#     challenge = request.query_params.get("hub.challenge")
-
-#     content = f"mode: {mode}\ntoken: {token}\nchallenge: {challenge}"
-#     return PlainTextResponse(content=content)
-
-# from fastapi import FastAPI, Request
-# from fastapi.responses import PlainTextResponse
-
 app = FastAPI()
 
 VERIFY_TOKEN = "s3cret123"
@@ -108,10 +84,40 @@ async def verify_webhook(
     return PlainTextResponse(content="Forbidden", status_code=403)
 
 
-# POST WhatsApp sends the messages here
+import httpx
+import os
+
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")  # from Meta
+
 @app.post("/webhook")
 async def webhook(request: Request):
     body = await request.json()
     print("Incoming message:", body)
-    # later call your /chat logic here
-    return {"status": "received"}
+
+    # Extract the text and sender
+    msg_text = body["entry"][0]["changes"][0]["value"]["messages"][0]["text"]["body"]
+    sender_id = body["entry"][0]["changes"][0]["value"]["messages"][0]["from"]
+
+    # Call your /chat endpoint
+    async with httpx.AsyncClient() as client:
+        chat_resp = await client.post(
+            "https://docker-fastapi-sp-bzccc0fbdzhgajgn.eastus2-01.azurewebsites.net/chat",  
+            json={"text": msg_text, "chat_id": sender_id}
+        )
+        chat_data = chat_resp.json()
+        reply_text = chat_data["reply"]
+
+    # Send reply back via WhatsApp Cloud API
+    url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": sender_id,
+        "type": "text",
+        "text": {"body": reply_text},
+    }
+
+    await client.post(url, headers=headers, json=payload)
+
+    return {"status": "ok"}
