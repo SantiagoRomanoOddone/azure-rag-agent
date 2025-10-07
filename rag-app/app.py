@@ -1,14 +1,11 @@
 import os
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Query
-from pydantic import BaseModel
-from openai import AzureOpenAI
 from fastapi.responses import PlainTextResponse
+from openai import AzureOpenAI
 
-
-# Same logic but as a web service to be called from WhatsApp
-
-# Load environment variables
+# Load env vars
 load_dotenv()
 open_ai_endpoint = os.getenv("OPEN_AI_ENDPOINT")
 open_ai_key = os.getenv("OPEN_AI_KEY")
@@ -17,6 +14,9 @@ embedding_model = os.getenv("EMBEDDING_MODEL")
 search_url = os.getenv("SEARCH_ENDPOINT")
 search_key = os.getenv("SEARCH_KEY")
 index_name = os.getenv("INDEX_NAME")
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 
 # OpenAI client
 chat_client = AzureOpenAI(
@@ -25,24 +25,37 @@ chat_client = AzureOpenAI(
     api_key=open_ai_key
 )
 
-# FastAPI app
 app = FastAPI()
 
-# Model to receive messages
-class Message(BaseModel):
-    text: str
-    chat_id: str  # optional, useful for maintaining context per user
+# VERIFY WEBHOOK (Meta validation)
+@app.get("/webhook")
+async def verify_webhook(
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token")
+):
+    if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
+        return PlainTextResponse(content=hub_challenge, status_code=200)
+    return PlainTextResponse(content="Forbidden", status_code=403)
 
-    
-# Endpoint that WhatsApp will call
-@app.post("/chat")
-async def chat(message: Message):
+# SINGLE ENDPOINT: receive WhatsApp msg → call OpenAI → reply back
+@app.post("/webhook")
+async def webhook(request: Request):
+    body = await request.json()
+    print("Incoming:", body)
+
+    try:
+        msg_text = body["entry"][0]["changes"][0]["value"]["messages"][0]["text"]["body"]
+        sender_id = body["entry"][0]["changes"][0]["value"]["messages"][0]["from"]
+    except Exception:
+        return {"status": "ignored"}
+
+    # Build prompt
     prompt = [
         {"role": "system", "content": "You are a travel assistant that provides information on travel services available from Margie's Travel."},
-        {"role": "user", "content": message.text}
+        {"role": "user", "content": msg_text}
     ]
 
-    # RAG parameters
     rag_params = {
         "data_sources": [
             {
@@ -58,57 +71,15 @@ async def chat(message: Message):
         ]
     }
 
+    # Call OpenAI
     response = chat_client.chat.completions.create(
         model=chat_model,
         messages=prompt,
         extra_body=rag_params
     )
+    reply_text = response.choices[0].message.content
 
-    completion = response.choices[0].message.content
-    return {"chat_id": message.chat_id, "reply": completion}
-
-
-
-app = FastAPI()
-
-VERIFY_TOKEN = "s3cret123"
-
-@app.get("/webhook")
-async def verify_webhook(
-    hub_mode: str = Query(None, alias="hub.mode"),
-    hub_challenge: str = Query(None, alias="hub.challenge"),
-    hub_verify_token: str = Query(None, alias="hub.verify_token")
-):
-    if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
-        return PlainTextResponse(content=hub_challenge, status_code=200)
-    return PlainTextResponse(content="Forbidden", status_code=403)
-
-
-import httpx
-import os
-
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
-PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")  # from Meta
-
-@app.post("/webhook")
-async def webhook(request: Request):
-    body = await request.json()
-    print("Incoming message:", body)
-
-    # Extract the text and sender
-    msg_text = body["entry"][0]["changes"][0]["value"]["messages"][0]["text"]["body"]
-    sender_id = body["entry"][0]["changes"][0]["value"]["messages"][0]["from"]
-
-    # Call your /chat endpoint
-    async with httpx.AsyncClient() as client:
-        chat_resp = await client.post(
-            "https://docker-fastapi-sp-bzccc0fbdzhgajgn.eastus2-01.azurewebsites.net/chat",  
-            json={"text": msg_text, "chat_id": sender_id}
-        )
-        chat_data = chat_resp.json()
-        reply_text = chat_data["reply"]
-
-    # Send reply back via WhatsApp Cloud API
+    # Send reply back via WhatsApp API
     url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     payload = {
@@ -118,6 +89,7 @@ async def webhook(request: Request):
         "text": {"body": reply_text},
     }
 
-    await client.post(url, headers=headers, json=payload)
+    async with httpx.AsyncClient() as client:
+        await client.post(url, headers=headers, json=payload)
 
     return {"status": "ok"}
