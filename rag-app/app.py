@@ -38,7 +38,6 @@ async def verify_webhook(
         return PlainTextResponse(content=hub_challenge, status_code=200)
     return PlainTextResponse(content="Forbidden", status_code=403)
 
-# SINGLE ENDPOINT: receive WhatsApp msg → call OpenAI → reply back
 @app.post("/webhook")
 async def webhook(request: Request):
     body = await request.json()
@@ -78,9 +77,10 @@ async def webhook(request: Request):
         extra_body=rag_params
     )
     reply_text = response.choices[0].message.content
+    print("Bot reply:", reply_text)  # ✅ Shows in logs
 
-    # Send reply back via WhatsApp API
-    url = f"https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages"
+    # Send reply via WhatsApp API
+    url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     payload = {
         "messaging_product": "whatsapp",
@@ -92,4 +92,5 @@ async def webhook(request: Request):
     async with httpx.AsyncClient() as client:
         await client.post(url, headers=headers, json=payload)
 
-    return {"status": "ok"}
+    # Return the bot reply for testing/inspection
+    return {"status": "ok", "bot_reply": reply_text}
