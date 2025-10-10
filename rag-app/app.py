@@ -77,7 +77,7 @@ async def webhook(request: Request):
         extra_body=rag_params
     )
     reply_text = response.choices[0].message.content
-    print("Bot reply:", reply_text)  # ✅ Shows in logs
+    print("Bot reply:", reply_text)  
 
     # Send reply via WhatsApp API
     url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
