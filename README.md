@@ -3,7 +3,7 @@
 ![Architecture](images/architecture.png)
 
 ## Overview
-This project is an end-to-end Retrieval-Augmented Generation (RAG) application fully hosted on **Azure**.  
+This project is a production-ready Retrieval-Augmented Generation (RAG) application fully hosted on **Azure**.  
 It connects **WhatsApp** with an intelligent agent that retrieves and provides information in real time.
 
 ## Key Components
