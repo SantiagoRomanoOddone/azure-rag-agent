@@ -6,9 +6,10 @@ from pathlib import Path
 # Add references
 from azure.identity import DefaultAzureCredential
 from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import ListSortOrder, MessageRole
+from azure.ai.agents.models import ListSortOrder, MessageRole, FunctionTool, ToolSet
 import httpx
 from openai import AzureOpenAI
+from functions.agents_functions import user_functions
 
 # ------------------ Vector RAG function (replicates original rag-app logic) ------------------ #
 def run_vector_rag(user_query: str, chat_history: List[Dict[str, str]]) -> str:
@@ -167,15 +168,19 @@ def main():
     ]
 
     with agent_client:
-        # Define a simple agent without function calling
+        # Register our RAG function via ToolSet and enable auto function calls
+        functions = FunctionTool(user_functions)
+        toolset = ToolSet()
+        toolset.add(functions)
+        agent_client.enable_auto_function_calls(toolset)
+
+        # Define an agent that can use the toolset
         agent = agent_client.create_agent(
             model=model_deployment,
             name="travel-assistant",
-            instructions="""You are a helpful travel assistant for Margie's Travel. 
-            
-You help customers with information about travel services, destinations, hotels, flights, and related services.
-Be friendly, professional, and helpful in all your responses.
-If you need to search for specific information, let the user know that you're checking the database.""",
+            instructions="""You are a helpful travel assistant for Margie's Travel.
+Use the available rag_search function whenever you need to consult Margie's Travel knowledge base. Return clear, grounded answers and include specifics (names, prices, dates) when present.""",
+            toolset=toolset,
         )
         print(f"Created agent: {agent.name}")
 
@@ -195,30 +200,11 @@ If you need to search for specific information, let the user know that you're ch
 
             print("Processing your request...")
 
-            # Run vector RAG (original logic) to get grounded answer text
-            vector_rag_answer = run_vector_rag(user_prompt, rag_chat_history)
-            # Also get fallback simple search context (optional)
-            simple_context = get_rag_enhanced_response(user_prompt)
-            # Update chat history with user + assistant answer from vector RAG for continuity
-            rag_chat_history.append({"role": "user", "content": user_prompt})
-            rag_chat_history.append({"role": "assistant", "content": vector_rag_answer})
-            
-            # Create an enhanced prompt that includes the vector answer + raw context lines for transparency
-            enhanced_prompt = f"""User question: {user_prompt}
-
-Vector-grounded answer candidate (from Azure OpenAI + vector search):
-{vector_rag_answer}
-
-Raw search context (simple keyword search, may be less precise):
-{simple_context}
-
-Please refine the vector-grounded answer. If context is insufficient, state limitations and ask for clarification."""
-
-            # Send the enhanced prompt to the agent
-            message = agent_client.messages.create(
+            # Send the user's prompt directly; the agent can call rag_search as needed
+            agent_client.messages.create(
                 thread_id=thread.id,
                 role="user",
-                content=enhanced_prompt,
+                content=user_prompt,
             )
 
             # Create and process the run
