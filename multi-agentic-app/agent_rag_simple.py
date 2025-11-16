@@ -19,7 +19,7 @@ def main():
     project_endpoint = os.getenv("PROJECT_ENDPOINT")
     model_deployment = os.getenv("MODEL_DEPLOYMENT_NAME")
 
-    print("Initializing Simple Azure AI Agent with RAG capabilities...")
+    print("Initializing Customer Support Agent with RAG capabilities...")
 
     # Connect to the Agent client
     agent_client = AgentsClient(
@@ -38,20 +38,22 @@ def main():
         agent_client.enable_auto_function_calls(toolset)
 
         # Load instructions from YAML
-        instr_path = Path(__file__).parent / "instructions" / "agent_travel_assistant.yml"
+        instr_path = Path(__file__).parent / "instructions" / "customer_support_assistant.yml"
         with open(instr_path, "r", encoding="utf-8") as f:
             instr_cfg = yaml.safe_load(f) or {}
+        agent_name = instr_cfg.get("name") or "customer-support-agent"
         instructions_text = (
             (instr_cfg.get("messages") or {}).get("system")
-            or "You are a helpful travel assistant for Margie's Travel."
+            or "You are an automated customer support assistant."
         )
 
         # Define an agent that can use the toolset
         agent = agent_client.create_agent(
             model=model_deployment,
-            name="travel-assistant",
+            name=agent_name,
             instructions=instructions_text,
             toolset=toolset,
+            temperature=0.2,
         )
         print(f"Created agent: {agent.name}")
 
@@ -62,7 +64,7 @@ def main():
         # Loop until the user types 'quit'
         while True:
             # Get input text
-            user_prompt = input("\nEnter your travel question (or type 'quit' to exit): ")
+            user_prompt = input("\nEnter your support question (or type 'quit' to exit): ")
             if user_prompt.lower() == "quit":
                 break
             if len(user_prompt) == 0:
@@ -95,7 +97,7 @@ def main():
                 role=MessageRole.AGENT,
             )
             if last_msg:
-                print(f"\n🤖 Travel Assistant: {last_msg.text.value}")
+                print(f"\nSimplePilot Assistant: {last_msg.text.value}")
 
         print("\n--- Conversation Summary ---")
         # Get the full conversation history
