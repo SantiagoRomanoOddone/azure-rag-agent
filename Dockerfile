@@ -10,12 +10,9 @@ COPY requirements.txt .
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your FastAPI app and the .env file
-COPY rag-app ./rag-app
-COPY rag-app/.env .env
+COPY multi_agentic_app/ ./multi_agentic_app
+COPY multi_agentic_app/.env .env
 
-# Expose the port
 EXPOSE 80
 
-# Command to run the FastAPI app
-CMD ["uvicorn", "rag-app.app:app", "--host", "0.0.0.0", "--port", "80"]
+CMD ["uvicorn", "multi_agentic_app.app:app", "--host", "0.0.0.0", "--port", "80"]
