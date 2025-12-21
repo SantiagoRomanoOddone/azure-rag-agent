@@ -1,128 +1,152 @@
 import os
+import json
+from typing import Callable, Any, Dict, List, Optional
+
 from dotenv import load_dotenv
-from pathlib import Path
-import yaml
+from openai import AzureOpenAI
 
-# Add references
-from azure.identity import DefaultAzureCredential
-from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import ListSortOrder, MessageRole, FunctionTool, ToolSet
-from functions.agents_functions import user_functions
+# Import your tool implementations (rag_search etc.)
+from functions.agents_functions import rag_search
+
+# -----------------------
+# Tool registry
+# -----------------------
+TOOL_IMPL: Dict[str, Callable[..., Any]] = {
+    "rag_search": rag_search,
+}
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "rag_search",
+            "description": "Run vector RAG over Azure AI Search and return a grounded answer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The user's question."},
+                    "history_json": {
+                        "type": "string",
+                        "description": "Optional JSON list of chat history messages [{role, content}].",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+]
 
 
-def main():
-    # Clear the console
-    os.system('cls' if os.name == 'nt' else 'clear')
+def run_chat_loop(client: AzureOpenAI, model: str) -> None:
+    print("Interactive console. Type 'quit' to exit.\n")
 
-    # Load environment variables from .env file
-    load_dotenv()
-    project_endpoint = os.getenv("PROJECT_ENDPOINT")
-    model_deployment = os.getenv("MODEL_DEPLOYMENT_NAME")
+    history: List[Dict[str, str]] = [
+        {
+            "role": "system",
+            "content": (
+                "You are a customer support assistant. "
+                "Use tools when needed. If you call a tool, wait for its result and then answer."
+            ),
+        }
+    ]
 
-    print("Initializing Customer Support Agent with RAG capabilities...")
+    while True:
+        user_prompt = input("User: ").strip()
+        if user_prompt.lower() == "quit":
+            break
+        if not user_prompt:
+            continue
 
-    # Connect to the Agent client
-    agent_client = AgentsClient(
-        endpoint=project_endpoint,
-        credential=DefaultAzureCredential(
-            exclude_environment_credential=True,
-            exclude_managed_identity_credential=True
+        # Add user message
+        history.append({"role": "user", "content": user_prompt})
+
+        # 1) Ask model (tool calling allowed)
+        resp1 = client.chat.completions.create(
+            model=model,
+            messages=history,
+            tools=TOOLS,
+            tool_choice="auto",
         )
+
+        assistant_msg = resp1.choices[0].message
+        tool_calls = getattr(assistant_msg, "tool_calls", None)
+
+        # If no tool call, just print answer
+        if not tool_calls:
+            answer = assistant_msg.content or ""
+            history.append({"role": "assistant", "content": answer})
+            print(f"\nAssistant: {answer}\n")
+            continue
+
+        # 2) If tool calls exist: record tool-call message then execute tools
+        history.append(
+            {
+                "role": "assistant",
+                "content": assistant_msg.content or "",
+                "tool_calls": [
+                    {
+                        "id": c.id,
+                        "type": "function",
+                        "function": {"name": c.function.name, "arguments": c.function.arguments},
+                    }
+                    for c in tool_calls
+                ],
+            }
+        )
+
+        for call in tool_calls:
+            fn_name = call.function.name
+            args = json.loads(call.function.arguments or "{}")
+            fn = TOOL_IMPL.get(fn_name)
+
+            if not fn:
+                tool_result = f"[tool_error] Unknown tool: {fn_name}"
+            else:
+                try:
+                    tool_result = fn(**args)
+                except Exception as e:
+                    tool_result = f"[tool_error] {fn_name} failed: {e}"
+
+            history.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": str(tool_result),
+                }
+            )
+
+        # 3) Ask model again to produce the final response using tool results
+        resp2 = client.chat.completions.create(
+            model=model,
+            messages=history,
+        )
+        final_answer = resp2.choices[0].message.content or ""
+        history.append({"role": "assistant", "content": final_answer})
+
+        print(f"\nAssistant: {final_answer}\n")
+
+
+def main() -> None:
+    load_dotenv()
+
+    endpoint = os.getenv("OPEN_AI_ENDPOINT")
+    api_key = os.getenv("OPEN_AI_KEY")
+    model = os.getenv("CHAT_MODEL")
+
+    if not endpoint or not api_key or not model:
+        raise RuntimeError("Missing OPEN_AI_ENDPOINT / OPEN_AI_KEY / CHAT_MODEL in environment.")
+
+    client = AzureOpenAI(
+        azure_endpoint=endpoint,
+        api_key=api_key,
+        api_version="2024-12-01-preview",
     )
 
-    with agent_client:
-        # Register our RAG function via ToolSet and enable auto function calls
-        functions = FunctionTool(user_functions)
-        toolset = ToolSet()
-        toolset.add(functions)
-        agent_client.enable_auto_function_calls(toolset)
-
-        # Load instructions from YAML
-        instr_path = Path(__file__).parent / "instructions" / "customer_support_assistant.yml"
-        with open(instr_path, "r", encoding="utf-8") as f:
-            instr_cfg = yaml.safe_load(f) or {}
-        agent_name = instr_cfg.get("name") or "customer-support-agent"
-        instructions_text = (
-            (instr_cfg.get("messages") or {}).get("system")
-            or "You are an automated customer support assistant."
-        )
-
-        # Define an agent that can use the toolset
-        agent = agent_client.create_agent(
-            model=model_deployment,
-            name=agent_name,
-            instructions=instructions_text,
-            toolset=toolset,
-            temperature=0.2,
-        )
-        print(f"Created agent: {agent.name}")
-
-        # Create a thread for the conversation
-        thread = agent_client.threads.create()
-        print("Started conversation thread")
-
-        # Loop until the user types 'quit'
-        while True:
-            # Get input text
-            user_prompt = input("\nEnter your support question (or type 'quit' to exit): ")
-            if user_prompt.lower() == "quit":
-                break
-            if len(user_prompt) == 0:
-                print("Please enter a question.")
-                continue
-
-            print("Processing your request...")
-
-            # Send the user's prompt directly; the agent can call rag_search as needed
-            agent_client.messages.create(
-                thread_id=thread.id,
-                role="user",
-                content=user_prompt,
-            )
-
-            # Create and process the run
-            run = agent_client.runs.create_and_process(
-                thread_id=thread.id, 
-                agent_id=agent.id
-            )
-
-            # Check the run status for failures
-            if run.status == "failed":
-                print(f"Run failed: {run.last_error}")
-                continue
-
-            # Show the latest response from the agent
-            last_msg = agent_client.messages.get_last_message_text_by_role(
-                thread_id=thread.id,
-                role=MessageRole.AGENT,
-            )
-            if last_msg:
-                print(f"\nSimplePilot Assistant: {last_msg.text.value}")
-
-        print("\n--- Conversation Summary ---")
-        # Get the full conversation history
-        messages = agent_client.messages.list(thread_id=thread.id, order=ListSortOrder.ASCENDING)
-        for message in messages:
-            role_icon = "👤" if message.role == MessageRole.USER else "🤖"
-            if message.text_messages:
-                last_msg = message.text_messages[-1]
-                # Only show the original user questions, not the enhanced prompts
-                if message.role == MessageRole.USER:
-                    # Extract just the user question from enhanced prompts
-                    content = last_msg.text.value
-                    if "User question:" in content:
-                        user_question = content.split("User question:")[1].split("\n")[0].strip()
-                        print(f"{role_icon} {message.role}: {user_question}\n")
-                    else:
-                        print(f"{role_icon} {message.role}: {content}\n")
-                else:
-                    print(f"{role_icon} {message.role}: {last_msg.text.value}\n")
-
-        # Clean up
-        print("Cleaning up resources...")
-        agent_client.delete_agent(agent.id)
-        print("Agent deleted successfully")
+    run_chat_loop(client, model)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
+
+
+

@@ -1,57 +1,75 @@
 import os
+import json
 import httpx
-import yaml
-from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Query
 from fastapi.responses import PlainTextResponse
+from openai import AzureOpenAI
 
-from azure.identity import DefaultAzureCredential
-from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import MessageRole, FunctionTool, ToolSet
+# Import your tool implementations
+from .functions.agents_functions import rag_search  # add more tools here if you have them
 
-from functions.agents_functions import user_functions
-
-
-# Load env
+# -----------------------
+# ENV + OpenAI client
+# -----------------------
 load_dotenv()
-PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT")
-MODEL_DEPLOYMENT = os.getenv("MODEL_DEPLOYMENT_NAME")
+
+OPEN_AI_ENDPOINT = os.getenv("OPEN_AI_ENDPOINT")
+OPEN_AI_KEY = os.getenv("OPEN_AI_KEY")
+CHAT_MODEL = os.getenv("CHAT_MODEL")
+
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
-print("DEBUG ENV:", PROJECT_ENDPOINT, MODEL_DEPLOYMENT)
+
+if not OPEN_AI_ENDPOINT or not OPEN_AI_KEY or not CHAT_MODEL:
+    raise RuntimeError("Missing OPEN_AI_ENDPOINT / OPEN_AI_KEY / CHAT_MODEL")
+
+client = AzureOpenAI(
+    azure_endpoint=OPEN_AI_ENDPOINT,
+    api_key=OPEN_AI_KEY,
+    api_version="2024-12-01-preview",
+)
+
 app = FastAPI()
 
-# --- Agent bootstrap (created once) ---
-agent_client = AgentsClient(
-    endpoint=PROJECT_ENDPOINT,
-    credential=DefaultAzureCredential(
-        exclude_environment_credential=True,
-        exclude_managed_identity_credential=True,
-    ),
+# -----------------------
+# Tools registry
+# -----------------------
+TOOL_IMPL = {
+    "rag_search": rag_search,
+}
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "rag_search",
+            "description": "Run vector RAG over Azure AI Search and return a grounded answer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The user's question."},
+                    "history_json": {
+                        "type": "string",
+                        "description": "Optional JSON list of chat history messages [{role, content}].",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    }
+]
+
+SYSTEM_PROMPT = (
+    "You are a customer support assistant. "
+    "Use tools when you need grounded information. "
+    "If you call a tool, wait for its result and then answer the user clearly."
 )
 
-toolset = ToolSet()
-toolset.add(FunctionTool(user_functions))
-agent_client.enable_auto_function_calls(toolset)
-
-instr_path = Path(__file__).parent / "instructions" / "customer_support_assistant.yml"
-with open(instr_path, "r", encoding="utf-8") as f:
-    cfg = yaml.safe_load(f) or {}
-
-agent = agent_client.create_agent(
-    model=MODEL_DEPLOYMENT,
-    name=cfg.get("name", "customer-support-agent"),
-    instructions=(cfg.get("messages") or {}).get(
-        "system", "You are an automated customer support assistant."
-    ),
-    toolset=toolset,
-    temperature=0.2,
-)
-
-
-# --- Webhook verification ---
+# -----------------------
+# Meta webhook verify
+# -----------------------
 @app.get("/webhook")
 async def verify_webhook(
     hub_mode: str = Query(None, alias="hub.mode"),
@@ -62,8 +80,9 @@ async def verify_webhook(
         return PlainTextResponse(content=hub_challenge, status_code=200)
     return PlainTextResponse(content="Forbidden", status_code=403)
 
-
-# --- WhatsApp webhook ---
+# -----------------------
+# WhatsApp webhook
+# -----------------------
 @app.post("/webhook")
 async def webhook(request: Request):
     body = await request.json()
@@ -74,28 +93,57 @@ async def webhook(request: Request):
     except Exception:
         return {"status": "ignored"}
 
-    thread = agent_client.threads.create()
+    # Keep a tiny history (optional). For WhatsApp, you can store per-user history if you want later.
+    history = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": msg_text},
+    ]
 
-    agent_client.messages.create(
-        thread_id=thread.id,
-        role=MessageRole.USER,
-        content=msg_text,
+    # 1) model call with tools enabled
+    resp1 = client.chat.completions.create(
+        model=CHAT_MODEL,
+        messages=history,
+        tools=TOOLS,
+        tool_choice="auto",
     )
+    assistant_msg = resp1.choices[0].message
+    tool_calls = getattr(assistant_msg, "tool_calls", None)
 
-    run = agent_client.runs.create_and_process(
-        thread_id=thread.id,
-        agent_id=agent.id,
-    )
+    # default reply if no tools needed
+    reply_text = assistant_msg.content or ""
 
-    if run.status == "failed":
-        reply_text = "Sorry, something went wrong."
-    else:
-        reply = agent_client.messages.get_last_message_text_by_role(
-            thread_id=thread.id,
-            role=MessageRole.AGENT,
+    # 2) if tool calls exist: execute tools and ask model again
+    if tool_calls:
+        history.append(assistant_msg)  # include tool-call request
+
+        for call in tool_calls:
+            fn_name = call.function.name
+            args = json.loads(call.function.arguments or "{}")
+
+            fn = TOOL_IMPL.get(fn_name)
+            if not fn:
+                tool_result = f"[tool_error] Unknown tool: {fn_name}"
+            else:
+                try:
+                    tool_result = fn(**args)
+                except Exception as e:
+                    tool_result = f"[tool_error] {fn_name} failed: {e}"
+
+            history.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": str(tool_result),
+                }
+            )
+
+        resp2 = client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=history,
         )
-        reply_text = reply.text.value if reply else "No response."
+        reply_text = resp2.choices[0].message.content or "No response."
 
+    # 3) send to WhatsApp
     url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     payload = {
@@ -105,7 +153,10 @@ async def webhook(request: Request):
         "text": {"body": reply_text},
     }
 
-    async with httpx.AsyncClient() as client:
-        await client.post(url, headers=headers, json=payload)
+    async with httpx.AsyncClient() as http_client:
+        await http_client.post(url, headers=headers, json=payload)
 
-    return {"status": "ok"}
+    return {"status": "ok", "bot_reply": reply_text}
+
+
+
