@@ -143,9 +143,14 @@ async def webhook(request: Request):
         )
         reply_text = resp2.choices[0].message.content or "No response."
 
+    
+
     # 3) send to WhatsApp
     url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json",
+    }
     payload = {
         "messaging_product": "whatsapp",
         "to": sender_id,
@@ -154,9 +159,9 @@ async def webhook(request: Request):
     }
 
     async with httpx.AsyncClient() as http_client:
-        await http_client.post(url, headers=headers, json=payload)
+        resp = await http_client.post(url, headers=headers, json=payload)
+        print("WA SEND:", resp.status_code, resp.text)
 
     return {"status": "ok", "bot_reply": reply_text}
-
 
 
