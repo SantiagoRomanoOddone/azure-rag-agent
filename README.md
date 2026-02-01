@@ -1,6 +1,6 @@
 # Azure RAG Application
 
-![Architecture](images/architecture.png)
+![Architecture](images/architecture.jpg)
 
 ## Overview
 This project is a production-ready Retrieval-Augmented Generation (RAG) application fully hosted on **Azure**.  
