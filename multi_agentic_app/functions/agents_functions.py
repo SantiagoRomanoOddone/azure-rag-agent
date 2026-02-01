@@ -9,7 +9,7 @@ from openai import AzureOpenAI
 def rag_search(query: str, history_json: Optional[str] = None) -> str:
     """
     Tool: rag_search
-    - Uses AzureOpenAI (API key + endpoint) and Azure AI Search vector RAG (same as your old app)
+    - Uses AzureOpenAI and Azure AI Search vector RAG
     - Returns a grounded answer as plain text.
     """
     try:
@@ -40,7 +40,6 @@ def rag_search(query: str, history_json: Optional[str] = None) -> str:
         if missing:
             return f"[RAG] Missing env vars: {', '.join(missing)}"
 
-        # Parse optional history
         history: List[Dict[str, str]] = []
         if history_json:
             try:
@@ -53,15 +52,19 @@ def rag_search(query: str, history_json: Optional[str] = None) -> str:
             except Exception:
                 pass
 
-        # Ensure system prompt exists
         if not any(m.get("role") == "system" for m in history):
             history.insert(
                 0,
                 {
                     "role": "system",
                     "content": (
-                        "You are a travel assistant that provides information on travel services "
-                        "available from Margie's Travel."
+                        "You are a knowledge base search assistant. "
+                        "Your role is to find and return accurate information from the documents. "
+                        "Rules: "
+                        "1. Only respond with information found in the documents. "
+                        "2. If no relevant information is found, respond exactly: 'NO_INFO_FOUND'. "
+                        "3. Do not make up or assume any data. "
+                        "4. Be concise and direct."
                     ),
                 },
             )
@@ -102,3 +105,16 @@ def rag_search(query: str, history_json: Optional[str] = None) -> str:
 
     except Exception as ex:
         return f"[RAG] Error: {ex}"
+
+
+def get_pricing_info() -> str:
+    """
+    Returns pricing information or link to the store.
+    """
+    return (
+        "Pricing information is available at our online store: "
+        "https://example.com/store - "
+        "Prices are subject to change without notice."
+    )
+
+
